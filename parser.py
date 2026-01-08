@@ -76,6 +76,8 @@ def save_state(state):
 # ---------------- MAIN LOOP ----------------
 
 def check_loop():
+    global last_html_table
+
     prev_data = {}
     if os.path.exists(DATA_FILE):
         with open(DATA_FILE, "r", encoding="utf-8") as f:
@@ -91,6 +93,7 @@ def check_loop():
             time.sleep(CHECK_INTERVAL)
             continue
 
+        # ---- TELEGRAM LOGIC ----
         for name, item in current.items():
             price_real = item["price_real"]
             qty = item["qty"]
@@ -118,9 +121,46 @@ def check_loop():
                 log_change(f"{name}: {baseline} → {rounded} ({change_percent:.2f}%)")
                 state[name]["baseline"] = rounded
 
+        # ---- BUILD WEB TABLE ----
+        rows = []
+        for name, item in current.items():
+            price = item["price_real"]
+            qty = item["qty"]
+            old = prev_data.get(name, {}).get("price_real")
+            diff = ""
+            if old:
+                diff = f"{((price - old) / old * 100):.2f}"
+            rows.append((name, price, qty, diff))
+
+        rows.sort(key=lambda x: abs(float(x[3])) if x[3] else 0, reverse=True)
+
+        html = """
+        <h2>Зміни цін</h2>
+        <table border="1" cellspacing="0" cellpadding="6">
+            <tr>
+                <th>Назва</th>
+                <th>Ціна</th>
+                <th>Кількість</th>
+                <th>Зміна (%)</th>
+            </tr>
+        """
+        for r in rows:
+            html += f"""
+            <tr>
+                <td>{r[0]}</td>
+                <td>{r[1]}</td>
+                <td>{r[2]}</td>
+                <td>{r[3]}</td>
+            </tr>
+            """
+        html += "</table>"
+
+        last_html_table = html
+
         with open(DATA_FILE, "w", encoding="utf-8") as f:
             json.dump(current, f, indent=2, ensure_ascii=False)
 
         save_state(state)
-        time.sleep(CHECK_INTERVAL)
+        prev_data = current
 
+        time.sleep(CHECK_INTERVAL)
