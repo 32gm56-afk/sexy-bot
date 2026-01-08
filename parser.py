@@ -8,7 +8,7 @@ from datetime import datetime
 from config import *
 from telegram import send_telegram
 
-# для веб-таблиці
+# HTML таблиця для вебу
 last_html_table = "<h2>Немає даних...</h2>"
 
 
@@ -73,6 +73,49 @@ def parse_page():
     return items
 
 
+# ---------------- TABLE BUILDER ----------------
+
+def build_table(current, prev_data, first_run=False):
+    rows = []
+
+    for name, item in current.items():
+        price = item["price_real"]
+        qty = item["qty"]
+
+        if first_run:
+            diff = "0.00"
+        else:
+            old = prev_data.get(name, {}).get("price_real")
+            diff = f"{((price - old) / old * 100):.2f}" if old else "0.00"
+
+        rows.append((name, price, qty, diff))
+
+    rows.sort(key=lambda x: abs(float(x[3])), reverse=True)
+
+    html = """
+    <h2>Зміни цін</h2>
+    <table border="1" cellspacing="0" cellpadding="6">
+        <tr>
+            <th>Назва</th>
+            <th>Ціна</th>
+            <th>Кількість</th>
+            <th>Зміна (%)</th>
+        </tr>
+    """
+    for r in rows:
+        html += f"""
+        <tr>
+            <td>{r[0]}</td>
+            <td>{r[1]}</td>
+            <td>{r[2]}</td>
+            <td>{r[3]}</td>
+        </tr>
+        """
+    html += "</table>"
+
+    return html
+
+
 # ---------------- MAIN LOOP ----------------
 
 def main_loop():
@@ -81,7 +124,7 @@ def main_loop():
     prev_data = load_json(DATA_FILE)
     state = load_json(STATE_FILE)
 
-    # 🔥 ПЕРША ПЕРЕВІРКА — ОДРАЗУ ПРИ СТАРТІ
+    # 🔥 ПЕРША ПЕРЕВІРКА — ОДРАЗУ
     print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] Перевірка оновлень (start)...")
 
     try:
@@ -95,6 +138,9 @@ def main_loop():
         rounded = round_price(item["price_real"])
         if rounded is not None:
             state.setdefault(name, {"baseline": rounded})
+
+    # 🔥 БУДУЄМО ТАБЛИЦЮ ОДРАЗУ
+    last_html_table = build_table(current, prev_data, first_run=True)
 
     save_json(DATA_FILE, current)
     save_json(STATE_FILE, state)
@@ -139,39 +185,8 @@ def main_loop():
                 send_telegram(msg)
                 state[name]["baseline"] = rounded
 
-        # ---------- WEB TABLE ----------
-        rows = []
-        for name, item in current.items():
-            price = item["price_real"]
-            qty = item["qty"]
-            old = prev_data.get(name, {}).get("price_real")
-            diff = f"{((price - old) / old * 100):.2f}" if old else ""
-            rows.append((name, price, qty, diff))
-
-        rows.sort(key=lambda x: abs(float(x[3])) if x[3] else 0, reverse=True)
-
-        html = """
-        <h2>Зміни цін</h2>
-        <table border="1" cellspacing="0" cellpadding="6">
-            <tr>
-                <th>Назва</th>
-                <th>Ціна</th>
-                <th>Кількість</th>
-                <th>Зміна (%)</th>
-            </tr>
-        """
-        for r in rows:
-            html += f"""
-            <tr>
-                <td>{r[0]}</td>
-                <td>{r[1]}</td>
-                <td>{r[2]}</td>
-                <td>{r[3]}</td>
-            </tr>
-            """
-        html += "</table>"
-
-        last_html_table = html
+        # ---------- TABLE ----------
+        last_html_table = build_table(current, prev_data, first_run=False)
 
         save_json(DATA_FILE, current)
         save_json(STATE_FILE, state)
