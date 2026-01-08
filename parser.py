@@ -8,27 +8,38 @@ from datetime import datetime
 from config import *
 from telegram import send_telegram
 
+# для веб-таблиці
 last_html_table = "<h2>Немає даних...</h2>"
 
-# ---------------- LOG ----------------
 
-def log_change(msg: str):
-    ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    with open(LOG_FILE, "a", encoding="utf-8") as f:
-        f.write(f"[{ts}] {msg}\n")
-
-# ---------------- ROUND PRICE ----------------
+# ---------------- HELPERS ----------------
 
 def round_price(p):
     if p < 0.009:
         return None
-    p1000 = int(round(p * 1000))
-    base = (p1000 // 10) * 10
-    if p1000 % 10 >= 9:
+    v = int(round(p * 1000))
+    base = (v // 10) * 10
+    if v % 10 >= 9:
         base += 10
     return base / 1000.0
 
-# ---------------- PARSE PAGE ----------------
+
+def load_json(path):
+    if os.path.exists(path):
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except:
+            return {}
+    return {}
+
+
+def save_json(path, data):
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(data, f, indent=2, ensure_ascii=False)
+
+
+# ---------------- PARSER ----------------
 
 def parse_page():
     r = requests.get(URL, timeout=10)
@@ -61,39 +72,47 @@ def parse_page():
 
     return items
 
-# ---------------- STATE ----------------
-
-def load_state():
-    if os.path.exists(STATE_FILE):
-        with open(STATE_FILE, "r", encoding="utf-8") as f:
-            return json.load(f)
-    return {}
-
-def save_state(state):
-    with open(STATE_FILE, "w", encoding="utf-8") as f:
-        json.dump(state, f, indent=2, ensure_ascii=False)
 
 # ---------------- MAIN LOOP ----------------
 
-def check_loop():
+def main_loop():
     global last_html_table
 
-    prev_data = {}
-    if os.path.exists(DATA_FILE):
-        with open(DATA_FILE, "r", encoding="utf-8") as f:
-            prev_data = json.load(f)
+    prev_data = load_json(DATA_FILE)
+    state = load_json(STATE_FILE)
 
-    state = load_state()
+    # 🔥 ПЕРША ПЕРЕВІРКА — ОДРАЗУ ПРИ СТАРТІ
+    print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] Перевірка оновлень (start)...")
 
+    try:
+        current = parse_page()
+    except Exception as e:
+        print(f"[ERROR] Parse error: {e}")
+        current = {}
+
+    # ініціалізація baseline
+    for name, item in current.items():
+        rounded = round_price(item["price_real"])
+        if rounded is not None:
+            state.setdefault(name, {"baseline": rounded})
+
+    save_json(DATA_FILE, current)
+    save_json(STATE_FILE, state)
+    prev_data = current
+
+    # 🔁 ОСНОВНИЙ ЦИКЛ
     while True:
+        time.sleep(CHECK_INTERVAL)
+
+        print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] Перевірка оновлень...")
+
         try:
             current = parse_page()
         except Exception as e:
-            log_change(f"Parse error: {e}")
-            time.sleep(CHECK_INTERVAL)
+            print(f"[ERROR] Parse error: {e}")
             continue
 
-        # ---- TELEGRAM LOGIC ----
+        # ---------- TELEGRAM ----------
         for name, item in current.items():
             price_real = item["price_real"]
             qty = item["qty"]
@@ -102,11 +121,11 @@ def check_loop():
             if rounded is None:
                 continue
 
-            if name not in state:
+            baseline = state.get(name, {}).get("baseline")
+            if baseline is None:
                 state[name] = {"baseline": rounded}
                 continue
 
-            baseline = state[name]["baseline"]
             change_percent = ((rounded - baseline) / baseline) * 100
             diff_abs = rounded - baseline
 
@@ -118,18 +137,15 @@ def check_loop():
                     f"Кількість: {qty}"
                 )
                 send_telegram(msg)
-                log_change(f"{name}: {baseline} → {rounded} ({change_percent:.2f}%)")
                 state[name]["baseline"] = rounded
 
-        # ---- BUILD WEB TABLE ----
+        # ---------- WEB TABLE ----------
         rows = []
         for name, item in current.items():
             price = item["price_real"]
             qty = item["qty"]
             old = prev_data.get(name, {}).get("price_real")
-            diff = ""
-            if old:
-                diff = f"{((price - old) / old * 100):.2f}"
+            diff = f"{((price - old) / old * 100):.2f}" if old else ""
             rows.append((name, price, qty, diff))
 
         rows.sort(key=lambda x: abs(float(x[3])) if x[3] else 0, reverse=True)
@@ -157,10 +173,6 @@ def check_loop():
 
         last_html_table = html
 
-        with open(DATA_FILE, "w", encoding="utf-8") as f:
-            json.dump(current, f, indent=2, ensure_ascii=False)
-
-        save_state(state)
+        save_json(DATA_FILE, current)
+        save_json(STATE_FILE, state)
         prev_data = current
-
-        time.sleep(CHECK_INTERVAL)
