@@ -8,6 +8,8 @@ from datetime import datetime
 from config import *
 from telegram import send_telegram
 
+last_html_table = "<h2>Немає даних...</h2>"
+
 # ---------------- LOG ----------------
 
 def log_change(msg: str):
@@ -121,3 +123,4 @@ def check_loop():
 
         save_state(state)
         time.sleep(CHECK_INTERVAL)
+
