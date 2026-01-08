@@ -44,4 +44,9 @@ def parse_page():
             left = int(cols[4].text)
             qty = total - left
 
-            if qty < 1 o
+            qty = total - left
+
+            if qty < 1:
+            continue
+
+items[name] = {"price": price, "qty": qty}
