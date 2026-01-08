@@ -45,16 +45,33 @@ def save_json(path, data):
 # -------------------------------
 
 def parse_page():
-    """Парсить ВСЮ сторінку"""
-    r = requests.get(URL, timeout=15)
+    session = requests.Session()
+
+    headers = {
+        "User-Agent": (
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+            "AppleWebKit/537.36 (KHTML, like Gecko) "
+            "Chrome/120.0.0.0 Safari/537.36"
+        ),
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        "Accept-Language": "uk-UA,uk;q=0.9,en-US;q=0.8,en;q=0.7",
+        "Connection": "keep-alive",
+        "Upgrade-Insecure-Requests": "1",
+    }
+
+    # перший "прогрів" (отримати cookies)
+    r1 = session.get(URL, headers=headers, timeout=20)
+    r1.raise_for_status()
+
+    # другий реальний запит
+    r = session.get(URL, headers=headers, timeout=20)
     r.raise_for_status()
 
     soup = BeautifulSoup(r.text, "html.parser")
     items = {}
 
     for table in soup.find_all("table"):
-        rows = table.find_all("tr")[1:]
-        for row in rows:
+        for row in table.find_all("tr")[1:]:
             cols = row.find_all("td")
             if len(cols) < 5:
                 continue
@@ -79,6 +96,7 @@ def parse_page():
             }
 
     return items
+
 
 
 # -------------------------------
@@ -141,3 +159,4 @@ def main_loop():
         log(f"✅ Перевірка завершена | items: {len(current)} | {elapsed:.2f}s")
 
         time.sleep(CHECK_INTERVAL)
+
