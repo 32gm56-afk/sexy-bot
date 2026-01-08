@@ -1,48 +1,52 @@
 import requests
-import time
 import json
+import time
 import os
 from bs4 import BeautifulSoup
 from datetime import datetime
+from time import perf_counter
 
-from config import *
+from config import URL, CHECK_INTERVAL
 from telegram import send_telegram
+from utils import round_price, format_msg
 
-# HTML таблиця для вебу
-last_html_table = "<h2>Немає даних...</h2>"
+DATA_FILE = "data.json"
+STATE_FILE = "state.json"
 
+# ---------------------------
+# logging (Render Logs)
+# ---------------------------
+def log(msg: str):
+    ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    print(f"[{ts}] {msg}", flush=True)
 
-# ---------------- HELPERS ----------------
-
-def round_price(p):
-    if p < 0.009:
-        return None
-    v = int(round(p * 1000))
-    base = (v // 10) * 10
-    if v % 10 >= 9:
-        base += 10
-    return base / 1000.0
-
-
-def load_json(path):
+# ---------------------------
+# json helpers
+# ---------------------------
+def load_json(path, default):
     if os.path.exists(path):
         try:
             with open(path, "r", encoding="utf-8") as f:
                 return json.load(f)
-        except:
-            return {}
-    return {}
-
+        except Exception:
+            return default
+    return default
 
 def save_json(path, data):
     with open(path, "w", encoding="utf-8") as f:
         json.dump(data, f, indent=2, ensure_ascii=False)
 
-
-# ---------------- PARSER ----------------
-
+# ---------------------------
+# parsing
+# ---------------------------
 def parse_page():
-    r = requests.get(URL, timeout=10)
+    r = requests.get(
+        URL,
+        timeout=20,
+        headers={"User-Agent": "Mozilla/5.0"}
+    )
+    r.raise_for_status()
+
     soup = BeautifulSoup(r.text, "html.parser")
     items = {}
 
@@ -53,16 +57,18 @@ def parse_page():
                 continue
 
             name = cols[0].text.strip()
+
             try:
                 price = float(cols[1].text.strip())
-            except:
+                total = int(cols[3].text.strip())
+                left = int(cols[4].text.strip())
+            except Exception:
                 continue
 
-            total = int(cols[3].text.strip())
-            left = int(cols[4].text.strip())
             qty = total - left
-
-            if qty < 1 or price < 0.010:
+            if qty < 1:
+                continue
+            if price < 0.010:
                 continue
 
             items[name] = {
@@ -72,122 +78,70 @@ def parse_page():
 
     return items
 
+# ---------------------------
+# main loop
+# ---------------------------
+def parser_loop(shared_state: dict):
+    log("🚀 Парсер запущено")
 
-# ---------------- TABLE BUILDER ----------------
+    prev_data = load_json(DATA_FILE, {})
+    state = load_json(STATE_FILE, {})
 
-def build_table(current, prev_data, first_run=False):
-    rows = []
-
-    for name, item in current.items():
-        price = item["price_real"]
-        qty = item["qty"]
-
-        if first_run:
-            diff = "0.00"
-        else:
-            old = prev_data.get(name, {}).get("price_real")
-            diff = f"{((price - old) / old * 100):.2f}" if old else "0.00"
-
-        rows.append((name, price, qty, diff))
-
-    rows.sort(key=lambda x: abs(float(x[3])), reverse=True)
-
-    html = """
-    <h2>Зміни цін</h2>
-    <table border="1" cellspacing="0" cellpadding="6">
-        <tr>
-            <th>Назва</th>
-            <th>Ціна</th>
-            <th>Кількість</th>
-            <th>Зміна (%)</th>
-        </tr>
-    """
-    for r in rows:
-        html += f"""
-        <tr>
-            <td>{r[0]}</td>
-            <td>{r[1]}</td>
-            <td>{r[2]}</td>
-            <td>{r[3]}</td>
-        </tr>
-        """
-    html += "</table>"
-
-    return html
-
-
-# ---------------- MAIN LOOP ----------------
-
-def main_loop():
-    global last_html_table
-
-    prev_data = load_json(DATA_FILE)
-    state = load_json(STATE_FILE)
-
-    # 🔥 ПЕРША ПЕРЕВІРКА — ОДРАЗУ
-    print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] Перевірка оновлень (start)...")
-
-    try:
-        current = parse_page()
-    except Exception as e:
-        print(f"[ERROR] Parse error: {e}")
-        current = {}
-
-    # ініціалізація baseline
-    for name, item in current.items():
-        rounded = round_price(item["price_real"])
-        if rounded is not None:
-            state.setdefault(name, {"baseline": rounded})
-
-    # 🔥 БУДУЄМО ТАБЛИЦЮ ОДРАЗУ
-    last_html_table = build_table(current, prev_data, first_run=True)
-
-    save_json(DATA_FILE, current)
-    save_json(STATE_FILE, state)
-    prev_data = current
-
-    # 🔁 ОСНОВНИЙ ЦИКЛ
     while True:
-        time.sleep(CHECK_INTERVAL)
-
-        print(f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] Перевірка оновлень...")
+        start_time = perf_counter()
+        log("🔍 Початок перевірки...")
 
         try:
             current = parse_page()
+            duration = perf_counter() - start_time
+
+            log(
+                f"✅ Перевірка успішна | items: {len(current)} | "
+                f"time: {duration:.2f}s"
+            )
+
         except Exception as e:
-            print(f"[ERROR] Parse error: {e}")
+            log(f"❌ Помилка перевірки: {e}")
+            time.sleep(CHECK_INTERVAL)
             continue
 
-        # ---------- TELEGRAM ----------
+        # --- price logic ---
         for name, item in current.items():
             price_real = item["price_real"]
             qty = item["qty"]
 
-            rounded = round_price(price_real)
-            if rounded is None:
+            price_rounded = round_price(price_real)
+            if price_rounded is None:
                 continue
 
-            baseline = state.get(name, {}).get("baseline")
-            if baseline is None:
-                state[name] = {"baseline": rounded}
+            if name not in state:
+                state[name] = {"baseline": price_rounded}
                 continue
 
-            change_percent = ((rounded - baseline) / baseline) * 100
-            diff_abs = rounded - baseline
+            baseline = state[name]["baseline"]
+            diff = price_rounded - baseline
+            diff_percent = (diff / baseline) * 100 if baseline > 0 else 0
 
-            if abs(change_percent) >= 30 and abs(diff_abs) >= 0.008:
-                kind = "Підвищення" if change_percent > 0 else "Падіння"
-                msg = (
-                    f"<code>{name}</code>\n"
-                    f"{kind} ціни: {baseline} → {rounded}\n"
-                    f"Кількість: {qty}"
+            if abs(diff_percent) >= 30 and abs(diff) >= 0.008:
+                msg_type = "📈 Підвищення" if diff > 0 else "📉 Падіння"
+
+                msg = format_msg(
+                    name=name,
+                    old_price=baseline,
+                    new_price=price_rounded,
+                    qty=qty,
+                    msg_type=msg_type
                 )
-                send_telegram(msg)
-                state[name]["baseline"] = rounded
 
-        # ---------- TABLE ----------
-        last_html_table = build_table(current, prev_data, first_run=False)
+                send_telegram(msg)
+                log(f"{msg_type}: {name} {baseline} → {price_rounded}")
+
+                state[name]["baseline"] = price_rounded
 
         save_json(DATA_FILE, current)
         save_json(STATE_FILE, state)
-        prev_data = current
+
+        shared_state["last_data"] = current
+        shared_state["last_check"] = datetime.now().strftime("%H:%M:%S")
+
+        time.sleep(CHECK_INTERVAL)
