@@ -1,7 +1,6 @@
 from flask import Flask
 import threading
-
-from parser import main_loop, last_table_html
+import parser
 
 app = Flask(__name__)
 
@@ -10,30 +9,20 @@ app = Flask(__name__)
 def index():
     return f"""
     <html>
-    <head>
-        <meta charset="utf-8">
-        <title>Sexy-bot</title>
-        <script>
-            async function update() {{
-                const r = await fetch('/table');
-                document.getElementById('data').innerHTML = await r.text();
-            }}
-            setInterval(update, 60000);
-            window.onload = update;
-        </script>
-    </head>
+    <head><meta charset="utf-8"></head>
     <body>
-        <h1>Sexy-bot is running</h1>
-        <div id="data">{last_table_html}</div>
+        <h2>Sexy-bot is running</h2>
+        {parser.last_table_html}
     </body>
     </html>
     """
 
 
-@app.route("/table")
-def table():
-    return last_table_html
+def start_parser():
+    t = threading.Thread(target=parser.main_loop)
+    t.daemon = True
+    t.start()
 
 
-# 🔥 ГАРАНТОВАНИЙ СТАРТ ПАРСЕРА
-threading.Thread(target=main_loop, daemon=True).start()
+# 🔥 СТАРТ ОДРАЗУ ПРИ ЗАПУСКУ
+start_parser()
