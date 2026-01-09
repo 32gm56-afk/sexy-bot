@@ -14,8 +14,8 @@ CHECK_INTERVAL = 50
 DATA_FILE = "data.json"
 STATE_FILE = "state.json"
 
-BOT_TOKEN = os.getenv("BOT_TOKEN")
-CHAT_ID = os.getenv("CHAT_ID")
+BOT_TOKEN = os.getenv("8134393467:AAHRcOjVFiy8RTDWSXt3y3u_SDQwYIssK68")
+CHAT_ID = os.getenv("-4840038262")
 
 # ---------- PROXY ----------
 PROXY_HOST = os.getenv("PROXY_HOST")
@@ -184,3 +184,4 @@ def index():
 if __name__ == "__main__":
     threading.Thread(target=main_loop, daemon=True).start()
     app.run(host="0.0.0.0", port=10000)
+
