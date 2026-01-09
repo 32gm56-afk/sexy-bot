@@ -1,34 +1,39 @@
-import threading
-import time
 from flask import Flask
-from datetime import datetime
+import threading
 
-from parser import main_loop
-from telegram import send_telegram
+from parser import main_loop, last_table_html
 
 app = Flask(__name__)
 
-# ====== HTML ======
+
 @app.route("/")
 def index():
-    return """
-    <h1>Sexy-bot is running</h1>
-    <p>Очікування першої перевірки...</p>
+    return f"""
+    <html>
+    <head>
+        <meta charset="utf-8">
+        <title>Sexy-bot</title>
+        <script>
+            async function update() {{
+                const r = await fetch('/table');
+                document.getElementById('data').innerHTML = await r.text();
+            }}
+            setInterval(update, 60000);
+            window.onload = update;
+        </script>
+    </head>
+    <body>
+        <h1>Sexy-bot is running</h1>
+        <div id="data">{last_table_html}</div>
+    </body>
+    </html>
     """
 
-# ====== BACKGROUND THREAD ======
-def start_background():
-    print(f"[{datetime.now()}] 🚀 Бот запущено")
-    try:
-        send_telegram("🚀 Бот запущено та почав перевірку цін")
-    except Exception as e:
-        print("Telegram error:", e)
 
-    main_loop()
+@app.route("/table")
+def table():
+    return last_table_html
 
-# 🚨 ВАЖЛИВО:
-# запускається ОДИН раз при старті gunicorn worker
-thread = threading.Thread(target=start_background, daemon=True)
-thread.start()
 
-# Render/Gunicorn імпортує app, запуск тут НЕ ПОТРІБЕН
+# 🔥 ГАРАНТОВАНИЙ СТАРТ ПАРСЕРА
+threading.Thread(target=main_loop, daemon=True).start()
