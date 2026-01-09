@@ -7,7 +7,7 @@ from bs4 import BeautifulSoup
 from datetime import datetime
 
 # =========================
-# CONFIG (ENV)
+# CONFIG
 # =========================
 URL = "https://price.csgetto.love/"
 CHECK_INTERVAL = 50
@@ -21,11 +21,11 @@ PROXY_USER = os.getenv("PROXY_USER")
 PROXY_PASS = os.getenv("PROXY_PASS")
 
 # =========================
-# GLOBAL STATE
+# APP STATE
 # =========================
 app = Flask(__name__)
 last_html_table = "<p>Очікування першої перевірки...</p>"
-first_run_done = False
+started = False
 
 
 # =========================
@@ -33,7 +33,7 @@ first_run_done = False
 # =========================
 def send_telegram(text: str):
     if not BOT_TOKEN or not CHAT_ID:
-        print("⚠️ Telegram ENV not set")
+        print("⚠️ Telegram ENV missing")
         return
 
     try:
@@ -46,6 +46,7 @@ def send_telegram(text: str):
             },
             timeout=10
         )
+        print("📨 Telegram sent")
     except Exception as e:
         print("❌ Telegram error:", e)
 
@@ -83,12 +84,10 @@ def parse_page():
         "Connection": "keep-alive"
     }
 
-    proxies = get_proxies()
-
     r = requests.get(
         URL,
         headers=headers,
-        proxies=proxies,
+        proxies=get_proxies(),
         timeout=30
     )
 
@@ -125,7 +124,7 @@ def parse_page():
 
 
 # =========================
-# HTML TABLE
+# HTML
 # =========================
 def build_table(items):
     if not items:
@@ -154,53 +153,50 @@ def build_table(items):
 
 
 # =========================
-# MAIN LOOP
+# BACKGROUND LOOP
 # =========================
 def checker_loop():
-    global last_html_table, first_run_done
+    global last_html_table
 
-    send_telegram("🚀 Бот запущено. Починаю першу перевірку...")
-    print("🚀 Бот запущено")
+    print("🚀 Checker thread started")
+    send_telegram("🚀 Бот запущено. Починаю перевірку.")
 
     while True:
         try:
-            print(f"[{datetime.now()}] 🔍 Перевірка оновлень (start)")
+            print(f"[{datetime.now()}] 🔍 Перевірка оновлень...")
             items = parse_page()
-
             last_html_table = build_table(items)
-
-            print(f"[{datetime.now()}] ✅ Перевірка успішна, items: {len(items)}")
-
-            if not first_run_done:
-                send_telegram(f"✅ Перша перевірка успішна. Знайдено {len(items)} предметів.")
-                first_run_done = True
+            print(f"[{datetime.now()}] ✅ Перевірка успішна: {len(items)} items")
 
         except Exception as e:
-            print(f"[{datetime.now()}] ❌ Помилка парсингу: {e}")
+            print(f"[{datetime.now()}] ❌ Помилка: {e}")
 
         time.sleep(CHECK_INTERVAL)
 
 
 # =========================
-# FLASK
+# FLASK HOOK (CRITICAL)
+# =========================
+@app.before_first_request
+def start_background_task():
+    global started
+    if not started:
+        started = True
+        threading.Thread(target=checker_loop, daemon=True).start()
+        print("🧵 Background thread launched")
+
+
+# =========================
+# ROUTE
 # =========================
 @app.route("/")
 def index():
     return f"""
     <html>
-    <head>
-        <meta charset="utf-8">
-        <title>Sexy-bot</title>
-    </head>
+    <head><meta charset="utf-8"></head>
     <body>
         <h2>Sexy-bot is running</h2>
         {last_html_table}
     </body>
     </html>
     """
-
-
-# =========================
-# START
-# =========================
-threading.Thread(target=checker_loop, daemon=True).start()
